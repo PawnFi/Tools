@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.0;
 
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/utils/ERC721HolderUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC1155/IERC1155Upgradeable.sol";
@@ -22,7 +23,7 @@ import "./libraries/TransferHelper.sol";
  * @title Pawnfi's NftFastSwapForSwapV3 Contract
  * @author Pawnfi
  */
-contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeable {
+contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ERC1155HolderUpgradeable {
     using AddressUpgradeable for address;
     using SafeERC20Upgradeable for IERC20Upgradeable;
     using Path for bytes;
@@ -57,6 +58,12 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
     /// @notice Listing/offer contract address
     address public approveTrade;
 
+    /// @notice Token whitelist for swap nft to ERC-20 tokens
+    mapping(address => bool) public tokenWhitelist;
+
+    /// @notice Emitted when setting token whitelist
+    event SetTokenWhitelist(address indexed token, bool added);
+
     /**
      * @notice Initialize contract parameters - only execute once
      * @param uniswapRouter_ univ3 swap contract address
@@ -65,7 +72,8 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
      * @param nftSale_ nft consign contract address
      * @param approveTrade_ Listing/offer contract address
      */
-    function initialize(address uniswapRouter_, address quoter_, address pieceFactory_, address nftSale_, address approveTrade_) external initializer {
+    function initialize(address owner_, address uniswapRouter_, address quoter_, address pieceFactory_, address nftSale_, address approveTrade_) external initializer {
+        _transferOwnership(owner_);
         __ERC721Holder_init();
         __ERC1155Holder_init();
         uniswapRouter = uniswapRouter_;
@@ -79,24 +87,53 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
     }
 
     /**
+     * @notice Set token whitelist
+     * @param token token address
+     * @param added Set token whitelist
+     */
+    function setTokenWhitelist(address token, bool added) external onlyOwner {
+        _setTokenWhitelist(token, added);
+    }
+
+    /**
+     * @notice Set token whitelist
+     * @param tokens token address array
+     * @param added Set token whitelist
+     */
+    function setMultipleTokenWhitelist(address[] calldata tokens, bool added) external onlyOwner {
+        for(uint i = 0; i < tokens.length; i++) {
+            _setTokenWhitelist(tokens[i], added);
+        }
+    }
+
+    /**
+     * @notice Set token whitelist
+     * @param token token address
+     * @param added Set token whitelist
+     */
+    function _setTokenWhitelist(address token, bool added) private {
+        tokenWhitelist[token] = added;
+        emit SetTokenWhitelist(token, added);
+    }
+
+    /**
      * @notice Swap nft to token(random)
      * @param nftIds nft id array
      * @param amountOutMin Min output amount
      * @param path token swap router
-     * @param to The recipient of the output token
      */
-    function swapNFTForTokens(uint256[] memory nftIds, uint256 amountOutMin, bytes memory path, address to) external {
+    function swapNFTForTokens(uint256[] memory nftIds, uint256 amountOutMin, bytes memory path) external {
         require(nftIds.length > 0, "nft ids incorrect length");
 
         (address tokenIn, address tokenOut) = getFirstAndLastToken(path);
-
+        require(tokenWhitelist[tokenOut], "tokenOut is not in the token whitelist");
         address nftAddr = getNftAddress(tokenIn);
 
         _swapNFTForTokenBefore(nftAddr, tokenIn, nftIds);
 
         IPToken(tokenIn).deposit(nftIds);
 
-        _swapNFTForTokenAfter(tokenIn, tokenOut, to, path, amountOutMin);
+        _swapNFTForTokenAfter(tokenIn, tokenOut, msg.sender, path, amountOutMin);
         
     }
 
@@ -105,14 +142,13 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
      * @param nftId nft id
      * @param amountOutMin Min output amount
      * @param path token swap router
-     * @param to The recipient of the output token
      * @param blockCount Lock-up block amount
      * @param salePrice Sale price in ptoken
      */
-    function swapSingleNFTForTokens(uint256 nftId, uint256 amountOutMin, bytes memory path, address to, uint256 blockCount, uint256 salePrice) external {
+    function swapSingleNFTForTokens(uint256 nftId, uint256 amountOutMin, bytes memory path, uint256 blockCount, uint256 salePrice) external {
 
         (address tokenIn, address tokenOut) = getFirstAndLastToken(path);
-
+        require(tokenWhitelist[tokenOut], "tokenOut is not in the token whitelist");
         address nftAddr = getNftAddress(tokenIn);
 
         uint256[] memory nftIds = new uint256[](1);
@@ -121,8 +157,7 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
         
         INftSale(nftSale).delegateCreate(msg.sender, nftAddr, nftId, blockCount, salePrice);
 
-        _swapNFTForTokenAfter(tokenIn, tokenOut, to, path, amountOutMin);
-
+        _swapNFTForTokenAfter(tokenIn, tokenOut, msg.sender, path, amountOutMin);
     }
 
     /**
@@ -166,9 +201,8 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
      * @param number NFT swap amount
      * @param amountInMax Max input amount
      * @param path token swap router
-     * @param to The recipient of the output token
      */
-    function swapTokensForNFT(uint256 number, uint256 amountInMax, bytes memory path, address to) external payable {
+    function swapTokensForNFT(uint256 number, uint256 amountInMax, bytes memory path) external payable {
         require(number > 0, "number must greater than zero");
 
         (address tokenOut, address tokenIn) = getFirstAndLastToken(path);
@@ -179,7 +213,7 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
         uint256[] memory nftIds = IPToken(tokenOut).randomTrade(number);
 
         address nftAddr = getNftAddress(tokenOut);
-        _swapTokenForNFTAfter(tokenIn, tokenOut, nftAddr, to, nftIds);
+        _swapTokenForNFTAfter(tokenIn, tokenOut, nftAddr, msg.sender, nftIds);
     }
 
     /**
@@ -187,9 +221,8 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
      * @param nftIds nft id array
      * @param amountInMax Max input amount
      * @param path token swap router
-     * @param to The recipient of the output token
      */
-    function swapTokensForSpecifiedNFT(uint256[] memory nftIds, uint256 amountInMax, bytes memory path, address to) external payable {
+    function swapTokensForSpecifiedNFT(uint256[] memory nftIds, uint256 amountInMax, bytes memory path) external payable {
         uint256 length = nftIds.length;
         require(length > 0, "length must greater than zero");
 
@@ -200,7 +233,7 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
 
         IPToken(tokenOut).specificTrade(nftIds);
         address nftAddr = getNftAddress(tokenOut);
-        _swapTokenForNFTAfter(tokenIn, tokenOut, nftAddr, to, nftIds);
+        _swapTokenForNFTAfter(tokenIn, tokenOut, nftAddr, msg.sender, nftIds);
     }
 
     /**
@@ -208,9 +241,8 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
      * @param nftId token id
      * @param amountInMax Max input amount
      * @param path token swap router
-     * @param to The recipient of the output token
      */
-    function swapTokensForSingleNFT(uint256 nftId, uint256 amountInMax, bytes memory path, address to) external payable {
+    function swapTokensForSingleNFT(uint256 nftId, uint256 amountInMax, bytes memory path) external payable {
         (address tokenOut, address tokenIn) = getFirstAndLastToken(path);
         address nftAddr = getNftAddress(tokenOut);
         INftSale.SaleInfo memory saleInfo = INftSale(nftSale).getNftSaleInfo(nftAddr, nftId);
@@ -222,7 +254,7 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
         INftSale(nftSale).buy(nftAddr, nftId);
         uint256[] memory nftIds = new uint256[](1);
         nftIds[0] = nftId;
-        _swapTokenForNFTAfter(tokenIn, tokenOut, nftAddr, to, nftIds);
+        _swapTokenForNFTAfter(tokenIn, tokenOut, nftAddr, msg.sender, nftIds);
     }
 
     /**
@@ -274,9 +306,8 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
      * @param order Order info
      * @param amountInMax Max input amount
      * @param path token swap router
-     * @param to The recipient of nft
      */
-    function swapTokensForNFTOrder(IApproveTrade.Order memory order, uint256 amountInMax, bytes memory path, address to) external payable {
+    function swapTokensForNFTOrder(IApproveTrade.Order memory order, uint256 amountInMax, bytes memory path) external payable {
         uint256 amountIn = getAmountIn(order.price, path);
         require(amountIn <= amountInMax, "exceed amount in max");
 
@@ -318,9 +349,9 @@ contract NftFastSwapForSwapV3 is ERC721HolderUpgradeable, ERC1155HolderUpgradeab
             sig: new bytes(0)
         });
         IApproveTrade(approveTrade).matchAskWithTakerBid{value: msgValue}(buy, order);
-        _transferNonFungibleToken(order.collection, order.assetClass, address(this), to, order.tokenId, order.amount);
-        _sweepToken(tokenIn, to);
-        _sweepToken(tokenOut, to);
+        _transferNonFungibleToken(order.collection, order.assetClass, address(this), msg.sender, order.tokenId, order.amount);
+        _sweepToken(tokenIn, msg.sender);
+        _sweepToken(tokenOut, msg.sender);
     }
 
     /**
