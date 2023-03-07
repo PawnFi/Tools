@@ -3,11 +3,12 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "./MerkleVerifier.sol";
 
 contract RewardDistributor is Ownable {
-
+    using SafeERC20 for IERC20;
     uint256 public reclaimPeriod;
     address public token;
     bytes32 public merkleRoot;
@@ -35,13 +36,13 @@ contract RewardDistributor is Ownable {
         MerkleVerifier._verifyProof(leaf, merkleRoot, proof);
         claimed[leaf] = true;
 
-        require(IERC20(token).transfer(account, amount), "Transfer failed");
+        IERC20(token).safeTransfer(account, amount);
 
         emit Claimed(account, amount);
     }
 
     function reclaim(uint256 amount) external onlyOwner {
         require(block.timestamp > reclaimPeriod, "Tokens cannot be reclaimed");
-        require(IERC20(token).transfer(msg.sender, amount), "Transfer failed");
+        IERC20(token).safeTransfer(msg.sender, amount);
     }
 }
