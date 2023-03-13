@@ -345,7 +345,7 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
             price: order.price,
             tokenId: order.tokenId,
             amount: order.amount,
-            deadline: 0,
+            deadline: block.timestamp,
             sig: new bytes(0)
         });
         IApproveTrade(approveTrade).matchAskWithTakerBid{value: msgValue}(buy, order);
