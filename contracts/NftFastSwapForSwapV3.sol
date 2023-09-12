@@ -474,7 +474,7 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
 
 
     modifier onlyEOA() {
-        require(tx.origin == msg.sender, "Only EOA");
+        require(tx.origin == msg.sender && address(msg.sender).code.length == 0, "Only EOA");
         _;
     }
 
