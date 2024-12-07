@@ -14,11 +14,10 @@ module.exports = {
 		}]
 	},
 	networks: {
-		goerli: {
-			url: `${process.env.GOERLI_NETWORK}`,
-			chainId: 5,
-			gasPrice: 'auto',
-			accounts: [`${process.env.PRIVATEKEY}`],
+		sepolia: {
+		url: `${process.env.SEPOLIA_NETWORK}`,
+		chainId: 11155111,
+		accounts: [`${process.env.PRIVATEKEY}`]
 		},
 		mumbai: {
 			url: `${process.env.MUMBAI_NETWORK}`,

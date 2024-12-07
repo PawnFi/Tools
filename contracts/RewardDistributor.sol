@@ -9,8 +9,8 @@ import "./MerkleVerifier.sol";
 
 contract RewardDistributor is Ownable {
     using SafeERC20 for IERC20;
-    uint256 public reclaimPeriod;
-    address public token;
+    uint256 public immutable reclaimPeriod;
+    address public immutable token;
     bytes32 public merkleRoot;
     mapping(bytes32 => bool) public claimed;
 

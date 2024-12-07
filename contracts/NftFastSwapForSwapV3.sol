@@ -18,6 +18,7 @@ import "./interfaces/IPToken.sol";
 import "./interfaces/INftSale.sol";
 import "./interfaces/IApproveTrade.sol";
 import "./libraries/TransferHelper.sol";
+import "./interfaces/IPolarFighters.sol";
 
 /**
  * @title Pawnfi's NftFastSwapForSwapV3 Contract
@@ -122,7 +123,7 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
      * @param amountOutMin Min output amount
      * @param path token swap router
      */
-    function swapNFTForTokens(uint256[] memory nftIds, uint256 amountOutMin, bytes memory path) external {
+    function swapNFTForTokens(uint256[] memory nftIds, uint256 amountOutMin, bytes memory path) external onlyEOA {
         require(nftIds.length > 0, "nft ids incorrect length");
 
         (address tokenIn, address tokenOut) = getFirstAndLastToken(path);
@@ -145,7 +146,7 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
      * @param blockCount Lock-up block amount
      * @param salePrice Sale price in ptoken
      */
-    function swapSingleNFTForTokens(uint256 nftId, uint256 amountOutMin, bytes memory path, uint256 blockCount, uint256 salePrice) external {
+    function swapSingleNFTForTokens(uint256 nftId, uint256 amountOutMin, bytes memory path, uint256 blockCount, uint256 salePrice) external onlyEOA {
 
         (address tokenIn, address tokenOut) = getFirstAndLastToken(path);
         require(tokenWhitelist[tokenOut], "tokenOut is not in the token whitelist");
@@ -202,7 +203,7 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
      * @param amountInMax Max input amount
      * @param path token swap router
      */
-    function swapTokensForNFT(uint256 number, uint256 amountInMax, bytes memory path) external payable {
+    function swapTokensForNFT(uint256 number, uint256 amountInMax, bytes memory path) external payable onlyEOA {
         require(number > 0, "number must greater than zero");
 
         (address tokenOut, address tokenIn) = getFirstAndLastToken(path);
@@ -222,7 +223,7 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
      * @param amountInMax Max input amount
      * @param path token swap router
      */
-    function swapTokensForSpecifiedNFT(uint256[] memory nftIds, uint256 amountInMax, bytes memory path) external payable {
+    function swapTokensForSpecifiedNFT(uint256[] memory nftIds, uint256 amountInMax, bytes memory path) external payable onlyEOA {
         uint256 length = nftIds.length;
         require(length > 0, "length must greater than zero");
 
@@ -242,7 +243,7 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
      * @param amountInMax Max input amount
      * @param path token swap router
      */
-    function swapTokensForSingleNFT(uint256 nftId, uint256 amountInMax, bytes memory path) external payable {
+    function swapTokensForSingleNFT(uint256 nftId, uint256 amountInMax, bytes memory path) external payable onlyEOA {
         (address tokenOut, address tokenIn) = getFirstAndLastToken(path);
         address nftAddr = getNftAddress(tokenOut);
         INftSale.SaleInfo memory saleInfo = INftSale(nftSale).getNftSaleInfo(nftAddr, nftId);
@@ -307,7 +308,7 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
      * @param amountInMax Max input amount
      * @param path token swap router
      */
-    function swapTokensForNFTOrder(IApproveTrade.Order memory order, uint256 amountInMax, bytes memory path) external payable {
+    function swapTokensForNFTOrder(IApproveTrade.Order memory order, uint256 amountInMax, bytes memory path) external payable onlyEOA {
         uint256 amountIn = getAmountIn(order.price, path);
         require(amountIn <= amountInMax, "exceed amount in max");
 
@@ -471,5 +472,73 @@ contract NftFastSwapForSwapV3 is OwnableUpgradeable, ERC721HolderUpgradeable, ER
     }
 
     receive() external payable {}
+
+
+    modifier onlyEOA() {
+        require(tx.origin == msg.sender && address(msg.sender).code.length == 0, "Only EOA");
+        _;
+    }
+
+    function swapERC1000ForTokens(uint256[] calldata nftIds, uint256 amountOutMin, bytes calldata path) external onlyEOA {
+        uint256 length = nftIds.length;
+        require(length > 0, "nft ids incorrect length");
+
+        (address tokenIn, address tokenOut) = getFirstAndLastToken(path);
+
+        for (uint256 i = 0; i < length; i++) {
+            IPolarFighters(tokenIn).safeTransferFrom(msg.sender, tokenIn, nftIds[i]);
+        }
+
+        _swapNFTForTokenAfter(tokenIn, tokenOut, msg.sender, path, amountOutMin);
+        
+    }
+
+    function swapTokensForERC1000(uint256 number, uint256[] calldata nftIds, uint256 amountInMax, bytes calldata path) external payable onlyEOA {
+        require(number > 0 || nftIds.length > 0, "Invalid parameter");
+        (address tokenOut, address tokenIn) = getFirstAndLastToken(path);
+        (uint256 randomTradeFee, uint256 specificTradeFee, , ) = IPolarFighters(tokenOut).feeInfo();
+        uint256 fragments = IPolarFighters(tokenOut).fragments();
+        uint256 tokenAmount;
+        if (number > 0) {
+            tokenAmount =  fragments * number;
+            tokenAmount += tokenAmount * randomTradeFee / 1e18;
+        } else {
+            tokenAmount =  fragments * nftIds.length;
+            tokenAmount += tokenAmount * specificTradeFee / 1e18;
+        }
+        _swapTokenForNFTBefore(tokenIn, amountInMax, tokenAmount, path);
+
+        uint256[] memory ids;
+        if (number > 0) {
+            ids = IPolarFighters(tokenOut).randomTrade(number);
+        } else {
+            IPolarFighters(tokenOut).specificTrade(nftIds);
+            ids = nftIds;
+        }
+        _swapTokenForNFTAfter(tokenIn, tokenOut, tokenOut, msg.sender, ids);
+    }
+
+    function swapTokensForRedeemOrPurchase(uint256[] calldata nftIds, uint256 amountOut, uint256 amountInMax, bytes calldata path) external payable onlyEOA {
+        require(nftIds.length > 0 && amountOut > 0, "Invalid parameter");
+        (address tokenOut, address tokenIn) = getFirstAndLastToken(path);
+        _swapTokenForNFTBefore(tokenIn, amountInMax, amountOut, path);
+
+        IPolarFighters(tokenOut).redeemOrPurchase(nftIds);
+        _swapTokenForNFTAfter(tokenIn, tokenOut, tokenOut, msg.sender, nftIds);
+    }
+
+    function swapTokensForMint(uint256 number, uint256 amountInMax, bytes calldata path) external payable onlyEOA {
+        require(number > 0, "Invalid parameter");
+        (address tokenOut, address tokenIn) = getFirstAndLastToken(path);
+        (uint256 randomTradeFee, , , ) = IPolarFighters(tokenOut).feeInfo();
+        uint256 fragments = IPolarFighters(tokenOut).fragments();
+        uint256 tokenAmount = fragments * number;
+        tokenAmount += tokenAmount * randomTradeFee / 1e18;
+        _swapTokenForNFTBefore(tokenIn, amountInMax, tokenAmount, path);
+
+        IPolarFighters(tokenOut).mintNft(msg.sender, number);
+        _sweepToken(tokenIn, msg.sender);
+        _sweepToken(tokenOut, msg.sender);
+    }
 
 }
